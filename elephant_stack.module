@@ -1,0 +1,117 @@
+<?php
+define("MODULE_NAME", "elephant_stack");
+define("VERIFICATION_URL", "http://myelephant.xyz/activation/");
+define("PASSWORD_RESET_URL", "http://elephant.xyz/passreset/");
+
+/**
+ * Implements hook_mail_alter().
+ */
+function elephant_stack_mail_alter(&$message) {
+  // Altering user account verification email.
+  if ($message['id'] == 'user_register_no_approval_required') {
+    $joined = implode('|||', $message['body']);
+    $joined = strtr($joined, array(
+      '!elephant_user_verification' => getActivationUrl()));
+    $message['body'][] = explode('|||', $joined);
+  }
+
+  // Altering user password reset email.
+  if ($message['id'] == 'user_password_reset') {
+    $joined = implode('|||', $message['body']);
+    $joined = strtr($joined, array(
+      '!elephant_user_reset_token' => getPassResetToken()));
+    $message['body'][] = explode('|||', $joined);
+  }
+
+  // Altering pending approval mail for user item request email.
+  if ($message['id'] == 'user_register_pending_approval') {
+    $message['reply-to'] = getReplyToEmail();
+    // Altering subject
+    $joined_subject = implode('|||', $message['subject']);
+    $joined_subject = strtr($joined_subject, array(
+      '!itemname' => getRequestItemName()));
+    $message['subject'] = explode('|||', $joined_subject);
+    // Altering body
+    $joined_body = implode('|||', $message['body']);
+    $joined_body = strtr($joined_body, array(
+      '!itemname' => getRequestItemName(),
+      '!requestmessage' => getRequestMessage()));
+    $message['body'][] = explode('|||', $joined_body);
+  }
+}
+
+/**
+ * @return string | url includes user uid and verification code
+ * check Drupal\elephant_user\Service\ActivateAccount
+ */
+function getActivationUrl() {
+  $activateAccount = \Drupal::service('elephant_stack.activateaccount');
+  return VERIFICATION_URL . $activateAccount->getUserUid() . "/" . $activateAccount->getUserVerification();
+}
+
+/**
+ * @return string | url includes user uid and reset token
+ * check Drupal\elephant_user\Service\ResetPassword
+ */
+function getPassResetToken() {
+  $resetPassword = \Drupal::service('elephant_stack.resetpassword');
+  return PASSWORD_RESET_URL . $resetPassword->getUserUid() . "/" . $resetPassword->getPassResetToken()->fetchField();
+}
+
+/**
+ * Altering the default message type, i.e. Email for pending approval.
+ * Since this type of email is not required by elephant I have overridden it
+ * suit elephant app needs.
+ *
+ * Implements hook_form_alter().
+ */
+function elephant_stack_form_alter(&$form, \Drupal\Core\Form\FormStateInterface $form_state, $form_id) {
+  $mail_config = \Drupal::config('user.mail');
+  if ($form_id == "user_admin_settings") {
+    $form['email_pending_approval'] = array(
+      '#type' => 'details',
+      '#title' => 'Item request email (Template)',
+      '#description' => 'Edit the item request message which will be sent to the item owner when an item is requested.',
+      '#group' => 'email',
+    );
+    $form['email_pending_approval']['user_mail_register_pending_approval_subject'] = array(
+      '#type' => 'textfield',
+      '#title' => 'Subject',
+      '#default_value' => $mail_config->get('register_pending_approval.subject'),
+      '#maxlength' => 180,
+    );
+    $form['email_pending_approval']['user_mail_register_pending_approval_body'] = array(
+      '#type' => 'textarea',
+      '#title' => 'Body',
+      '#default_value' => $mail_config->get('register_pending_approval.body'),
+      '#rows' => 8,
+    );
+  }
+}
+
+/**
+ * @return string
+ */
+function getReplyToEmail() {
+  $itemService = \Drupal::service('elephant_stack.userintention');
+  $user = \Drupal\user\Entity\User::load($itemService->getRequestMessageData()['uid']);
+  return $user->getEmail();
+}
+
+/**
+ * @return string
+ */
+function getRequestItemName() {
+  $itemService = \Drupal::service('elephant_stack.userintention');
+  $item = \Drupal\node\Entity\Node::load($itemService->getRequestMessageData()['nid']);
+  return $item->getTitle();
+}
+
+/**
+ * @return string
+ */
+function getRequestMessage() {
+  $itemService = \Drupal::service('elephant_stack.userintention');
+  $msg = $itemService->getRequestMessageData()['msg'];
+  return \Drupal\Component\Utility\Html::escape($msg);
+}
